@@ -14,10 +14,14 @@
 //! - browsers only start audio after a user gesture, so the first click may be needed before
 //!   playback is heard.
 //!
+//! Unsaved sessions are copied to IndexedDB and offered back after a crash or reload (`recovery`).
+//!
 //! URL query flags: `?webgl` forces the WebGL2 backend instead of WebGPU; `?empty` starts with an
 //! empty session instead of the demo.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(target_arch = "wasm32")]
+mod recovery;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

@@ -25,6 +25,8 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // Copies of unsaved sessions a closed or crashed tab left, read before the app is built.
+        let mut startup = Some(crate::recovery::open().await);
         let mut options = eframe::WebOptions::default();
         if query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -42,7 +44,14 @@ pub fn start() {
                     let engine = if query().contains("empty") { Engine::default() } else { soundcraft_engine::demo::demo_engine() };
                     let player = soundcraft_playback::Player::new(Arc::new(engine.session().clone()));
                     let app = SoundApp::new(engine, Some(player), Services::default());
-                    Ok(Box::new(WebShell { app, inbox: Rc::default(), samples: Rc::default() }))
+                    let Some(startup) = startup.take() else { return Err("recovery store missing".into()) };
+                    for w in &startup.warnings {
+                        log::warn!("crash recovery: {w}");
+                    }
+                    let mut recovered = startup.recovered;
+                    recovered.reverse();
+                    let recovery = crate::recovery::WebRecovery::new(startup.store, None);
+                    Ok(Box::new(WebShell { app, inbox: Rc::default(), samples: Rc::default(), recovery, offered: recovered }))
                 }),
             )
             .await;
@@ -114,6 +123,9 @@ struct WebShell {
     app: SoundApp,
     inbox: Inbox,
     samples: SampleInbox,
+    recovery: crate::recovery::WebRecovery,
+    /// Copies left by earlier visits, oldest first: the newest is offered.
+    offered: Vec<craft_web_recovery::Recovered>,
 }
 
 impl WebShell {
@@ -165,6 +177,29 @@ impl WebShell {
         }
     }
 
+    /// "Recover Unsaved Work" for the newest copy an earlier visit left. Older ones stay stored and
+    /// are offered by a later visit.
+    fn offer_recovery(&mut self, ctx: &egui::Context) {
+        let Some(copy) = self.offered.last() else { return };
+        let Some(choice) = crate::recovery::offer(ctx, copy, self.app.engine.transport.recording) else { return };
+        let Some(copy) = self.offered.pop() else { return };
+        match choice {
+            crate::recovery::Choice::Discard => self.recovery.discard(&copy.key),
+            crate::recovery::Choice::Recover => match crate::recovery::restore(&mut self.app.engine, &copy) {
+                Ok(missing) => {
+                    self.app.document_replaced();
+                    self.recovery.adopt(copy.key.clone());
+                    self.offered.clear();
+                    self.app.ui.status = match missing.len() {
+                        0 => format!("Recovered “{}”. Save it to keep the changes.", copy.name),
+                        n => format!("Recovered “{}”, but {n} audio file(s) are missing. Save it to keep the changes.", copy.name),
+                    };
+                }
+                Err(e) => self.app.ui.status = format!("Couldn't recover “{}”: {e}", copy.name),
+            },
+        }
+    }
+
     fn handle(&mut self, purpose: Purpose, name: String, bytes: Vec<u8>) {
         let e = &mut self.app.engine;
         let at = e.session().edit.selection.start.max(0);
@@ -204,6 +239,10 @@ impl eframe::App for WebShell {
             self.app.load_sample_bytes(&read, bytes);
         }
         self.app.logic(ctx);
+        self.recovery.tick(&self.app.engine, ctx);
+        if let Some(failure) = self.recovery.take_failure() {
+            self.app.ui.status = failure;
+        }
         // A prompt opened during this frame becomes a picker on the next one.
         self.take_path_prompt(ctx);
     }
@@ -216,6 +255,7 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        self.offer_recovery(ui.ctx());
     }
 }
 

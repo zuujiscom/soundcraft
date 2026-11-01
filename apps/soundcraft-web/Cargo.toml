@@ -26,6 +26,8 @@ rfd = { workspace = true }
 js-sys = "0.3"
 # `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+# Crash-recovery copies in IndexedDB (craft-libs).
+craft-web-recovery = { git = "https://github.com/zuujiscom/craft-libs", branch = "web-recovery" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Location", "HtmlAnchorElement", "Blob", "BlobPropertyBag", "Url", "CssStyleDeclaration"] }
